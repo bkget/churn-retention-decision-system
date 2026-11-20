@@ -1,0 +1,84 @@
+# Central configuration for the Churn & Retention ROI Decision System.
+# Paths are relative to the project root.
+
+seed: 42
+
+data:
+  # "ibm_extended" = IBM Telco v11.1.3+ merged release (49 columns, has CLTV + Churn Reason)
+  # "kaggle_21"    = original Kaggle/IBM 21-column file (fallback)
+  source: ibm_extended
+  ibm_extended_files:
+    - data/raw/ibm_extended/train.csv
+    - data/raw/ibm_extended/validation.csv
+    - data/raw/ibm_extended/test.csv
+  kaggle_21_file: data/raw/Telco-Customer-Churn.csv
+  processed_file: data/processed/customers_clean.parquet
+
+split:
+  # Stratified 60 / 20 / 20. Train = fit + CV tuning, validation = calibration +
+  # threshold selection, test = final reporting only.
+  test_size: 0.20
+  val_size: 0.20
+
+features:
+  # Columns that leak the label or are another model's output. Never used as
+  # model inputs; kept only as metadata for validation / display / ROI.
+  leakage_blocklist:
+    - churn_category
+    - churn_reason
+    - churn_score
+    - customer_status
+    - satisfaction_score
+    - cltv
+    # Past treatment, tied to tenure (Offer E only goes to recent customers).
+    # Using it makes SHAP drivers circular for a retention-offer app.
+    - offer
+  # Identifiers and columns with no generalisable signal (constant, free-text
+  # location, or exact sums of other columns).
+  drop:
+    - customer_id
+    - city
+    - country
+    - state
+    - zip_code
+    - lat_long
+    - latitude
+    - longitude
+    - quarter
+    - population
+    - total_revenue
+  new_customer_months: 12
+
+model:
+  optuna_trials: 50
+  cv_folds: 5
+  bootstrap_iterations: 1000
+  # "sigmoid" (Platt) is strictly monotonic: it keeps the XGBoost ranking (and
+  # therefore PR-AUC / ROC-AUC / SHAP order) and only rescales probabilities.
+  # "isotonic" is more flexible but, on a ~1.4k-row calibration set, collapses
+  # scores into ties and loses ranking resolution. Both are reported.
+  calibration_method: sigmoid
+
+paths:
+  artifacts_dir: artifacts
+  models_dir: artifacts/models
+  metrics_file: artifacts/metrics.json
+  scored_file: artifacts/scored_customers.parquet
+  figures_dir: reports/figures
+
+roi:
+  # Defaults for the ROI simulator (used in later steps).
+  retention_offer_cost: 50.0
+  offer_acceptance_rate: 0.30
+  # "formula" = MonthlyCharges * expected_remaining_months (below).
+  # "cltv"    = the dataset's own CLTV column (IBM's predicted lifetime value).
+  ltv_source: formula
+  # LTV is revenue; set < 1.0 (e.g. 0.6) to value saved customers at contribution margin.
+  ltv_margin: 1.0
+  expected_remaining_months:
+    Month-to-Month: 12
+    One Year: 18
+    Two Year: 30
+  # Conservative default: the offer cost is paid for every targeted customer,
+  # including false positives. Set false to charge only customers who accept.
+  cost_applies_to_all_targeted: true
